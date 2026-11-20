@@ -1,0 +1,35 @@
+# Environment files (commit only .env.example)
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Java / Kotlin
+target/
+build/
+.gradle/
+
+# Uploads and local data
+uploads/
+*.sqlite
+*.db
+
+# Local tooling
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
