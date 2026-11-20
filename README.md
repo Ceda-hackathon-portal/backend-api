@@ -1,48 +1,65 @@
 # CEDA Innovation Portal: backend-api
 
-REST API for the CEDA Innovation Portal hackathon. It runs as a container on AWS ECS Fargate behind an Application Load Balancer.
+REST API for the CEDA Innovation Portal hackathon: Node.js 24, Express 5, TypeScript, Prisma 7 and PostgreSQL 17. It runs as a container on AWS.
 
 Related repositories:
 
 - [front-end](https://github.com/Ceda-hackathon-portal/front-end): web client that calls this API
-- [infra--devops](https://github.com/Ceda-hackathon-portal/infra--devops): Terraform for ECR, ECS, the load balancer, RDS and IAM
+- [infra--devops](https://github.com/Ceda-hackathon-portal/infra--devops): Terraform for the AWS resources
 
-## Container contract
+## Runtime contract
 
-The pipeline and the load balancer rely on these four rules, whatever language the API is written in:
+Deployment and CI rely on these rules:
 
-1. A `Dockerfile` at the repository root builds the production image.
-2. The server listens on the port given in `PORT` (default `8080`).
-3. `GET /health` returns HTTP 200 without needing the database or other services, so a cold container can pass its health check.
-4. All configuration comes from environment variables (see `.env.example`). Secrets are injected by ECS from Secrets Manager or SSM; they are never baked into the image.
+| Item | Value |
+| --- | --- |
+| Node.js | `24.22.2` (`.node-version`); the server refuses to start on any other major version |
+| Container port | `3001` (`PORT`); set `HOST=0.0.0.0` inside a container |
+| Liveness | `GET /health/live`: process is up, never touches the database. Use this for load balancer or container health checks |
+| Readiness | `GET /health/ready`: checks PostgreSQL, returns 503 while draining or when the database is unreachable |
+| API prefix | `/api/v1` |
+| Configuration | Environment variables only (see `.env.example`). Invalid values stop startup and report only the field name |
+| Production rules | `NODE_ENV=production` requires `DATABASE_SSL=true` and `https://` entries in `ALLOWED_ORIGINS`. Behind a load balancer, set `TRUST_PROXY` to its explicit IPs or CIDRs |
+| Migrations | Never run on server startup. Run `npm run db:migrate` (`prisma migrate deploy`) as a separate, reviewed step before rolling out a release that needs it |
+| Secrets | Injected at runtime from Secrets Manager or SSM. Never baked into the image or committed |
 
 ## Local development
 
 ```powershell
+npm.cmd ci
 Copy-Item .env.example .env
-docker build -t backend-api .
-docker run --rm -p 8080:8080 --env-file .env backend-api
+# Point DATABASE_URL in .env at your own development PostgreSQL database.
+npm.cmd run dev
 ```
 
-Then open `http://localhost:8080/health`.
+Verification:
+
+```powershell
+npm.cmd run db:validate
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run test:smoke
+```
 
 ## Branching and reviews
 
-- `main` is production. Every push to `main` deploys.
+- `main` is production. Every push to `main` deploys once deployment is configured.
 - Work on short-lived branches: `feature/<topic>`, `fix/<topic>`, `chore/<topic>`.
 - Open a pull request into `main`. CI must pass and one teammate approves before merging.
-- Agree request and response shapes with the front-end before building an endpoint, and record them in `docs/` or an OpenAPI file.
+- Agree request and response shapes with the front-end before building an endpoint, and keep `docs/openapi.yaml` current.
 
 ## CI/CD
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `ci.yml` | Every PR and push to `main` | Runs Node or Python tests if that stack is present; builds the image and checks `GET /health` |
-| `deploy.yml` | Push to `main`, or run manually | Pushes the image to ECR tagged with the commit SHA, registers a new task definition and waits for the ECS service to stabilise |
+| `ci.yml` | Every PR and push to `main` | **verify** (Linux and Windows): Prisma validate, typecheck, unit and smoke tests. **postgres**: applies migrations twice against PostgreSQL 17 and runs the integration tests. **container**: builds the image and checks `GET /health/live` |
+| `deploy.yml` | Push to `main`, or run manually | Pushes the image to ECR tagged with the commit SHA and rolls out a new ECS task definition |
 
-The deploy job authenticates with GitHub OIDC (no AWS keys in GitHub) and stays skipped until the `production` environment is configured.
+All CI jobs are skipped until the code is migrated in. The deploy job is skipped until the `production` environment is configured. It authenticates with GitHub OIDC, so no AWS keys are stored in GitHub.
 
-### Production environment settings
+**Hosting decision pending:** `deploy.yml` targets ECS. The backend team's ADR 005 recommends an AWS Free-plan option (EC2, no load balancer or NAT) to protect credits. Confirm the target with `infra--devops` before configuring the `production` environment; if EC2 is chosen, `deploy.yml` changes to an SSM-based rollout.
+
+### Production environment settings (ECS target)
 
 Create a GitHub environment named `production` (Settings → Environments) and add:
 
@@ -57,6 +74,17 @@ Create a GitHub environment named `production` (Settings → Environments) and a
 | Variable | `ECS_CONTAINER_NAME` | Container name inside that task definition |
 | Variable | `API_URL` | Public URL of the API (shown on each deployment) |
 
+## Migrating the existing backend
+
+The backend currently lives in `backend/` of the earlier `CedaHackathon` repository. Move it here without history:
+
+1. Copy the tracked contents of `backend/` to this repository's root: `src/`, `prisma/`, `tests/`, `docs/`, `ops/`, `spikes/`, `Dockerfile`, `package.json`, `package-lock.json`, `prisma.config.ts`, `tsconfig.json`, `AGENTS.md`.
+2. `.env.example`, `.node-version`, `.dockerignore` and `.gitignore` are already here and match the original.
+3. Merge the original `backend/README.md` into this README rather than overwriting it.
+4. Do not copy `.github/workflows/backend-ci.yml`. `ci.yml` here replaces it, with paths adjusted for the repository root.
+5. Bring along the shared documents from the old root that concern the API: `docs/BACKEND_ARCHITECTURE_HANDOFF.md` and `docs/codex/`.
+6. Open a PR. CI starts as soon as `package-lock.json` exists.
+
 ## Requirements this API serves
 
-From the CEDA competition guidelines: idea submission with mandatory fields, multi-level evaluation (evaluators then adjudicators), real-time status tracking, role-based access, feedback and iteration, and basic reporting. Permissions must be enforced here on the server, not only in the front-end. Personal data handling must follow Botswana's Data Protection Act, 2024.
+From the CEDA competition guidelines: idea submission with mandatory fields, multi-level evaluation (evaluators then adjudicators), real-time status tracking, role-based access, feedback and iteration, and basic reporting. Permissions are enforced here on the server, not only in the front-end. Personal data handling must follow Botswana's Data Protection Act, 2024.

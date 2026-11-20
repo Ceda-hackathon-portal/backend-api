@@ -3,6 +3,10 @@ name: Deploy
 # Builds the image, pushes it to ECR tagged with the commit SHA and rolls the ECS service.
 # Authenticates to AWS with GitHub OIDC: no long-lived AWS keys are stored in GitHub.
 # The job is skipped until the production environment is configured (see README).
+#
+# Database migrations are NOT run here: apply them with `npm run db:migrate` as a separate,
+# reviewed step before merging a release that needs them.
+# Hosting target (ECS vs the EC2 Free-plan option in ADR 005) is pending; see README.
 
 on:
   push:
