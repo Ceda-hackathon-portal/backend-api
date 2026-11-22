@@ -1,0 +1,40 @@
+{
+  "name": "ceda-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "prebuild": "prisma generate",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "start": "node dist/src/server.js",
+    "auth:hash-local-password": "node scripts/hash-local-password.mjs",
+    "dev": "npm run build && node --env-file-if-exists=.env --watch dist/src/server.js",
+    "test": "npm run build && node --test dist/tests/foundation.test.js dist/tests/authorization.test.js dist/tests/auth.test.js dist/tests/auth-provider.test.js dist/tests/applications.test.js dist/tests/eligibilityPolicy.test.js dist/tests/eligibility-rules.test.js dist/tests/officer-reader.test.js dist/tests/container.test.js dist/tests/workflow.test.js dist/tests/screening-security.test.js dist/tests/officer-routes.test.js dist/tests/b-domain.test.js dist/tests/review-config.test.js dist/tests/decision-config.test.js",
+    "db:validate": "prisma validate",
+    "db:migrate": "node --env-file-if-exists=.env ./node_modules/prisma/build/index.js migrate deploy",
+    "test:database": "npm run build && node tests/run-database.mjs",
+    "test:smoke": "node --test tests/server.smoke.mjs",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "express": "5.3.0",
+    "helmet": "8.3.0",
+    "openid-client": "6.8.9",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "prisma": "7.10.1",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,9 @@
+# Applicant submission contract
+
+Applicant documents are uploaded to `POST /api/v1/applications/{id}/documents?name=…&category=…&expectedRevision=…` as `application/octet-stream`. The request also carries the ordinary session cookie, Origin, and CSRF token. The route returns 201 with server document metadata and the incremented application revision. `GET /api/v1/applications/{id}/documents/{documentId}` streams the private file after checking application ownership.
+
+Uploads are limited to 10 MiB and accept PDF, DOCX, JPG, or PNG with server-side extension and content-signature checks. The JSON-only middleware remains in place for all other paths. A generated UUID is used for the private storage key; the supplied name is metadata only. The local adapter writes under `APPLICATION_STORAGE_DIR` (default `.runtime/application-files`), outside the public web root. Hosted environments must provide a private persistent storage adapter and malware scanning before opening to real applicants.
+
+Draft PATCH accepts the existing six narrative fields plus `budget: { items: [{ description, amount }], fundingRequested, notApplicable }`. Amounts are decimal strings with at most two fractional digits, so monetary values do not pass through floating-point storage. Requested funding may not exceed the exact decimal sum. The migration stores budget JSON in PostgreSQL and stores attachment metadata in `application_documents`.
+
+Final submission requires the `technical-proposal` attachment and at least one valid budget item or `notApplicable: true`. It retains the existing revision and `Idempotency-Key` behavior. The transaction records the immutable budget snapshot, associates the uploaded document metadata with the immutable submission version, writes the receipt, and records audit/outbox events. Failed validation leaves the draft and files available for correction.

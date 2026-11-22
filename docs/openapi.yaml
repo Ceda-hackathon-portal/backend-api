@@ -1,0 +1,804 @@
+openapi: 3.1.0
+info:
+  title: CEDA Backend Foundation
+  version: 0.1.0
+  description: Health and opt-in Cognito authentication. Auth routes return 404 when disabled. HTTPS cookies are Secure, HttpOnly, SameSite=Lax and Path=/ with no Domain. Loopback HTTP uses dev_ names. Responses use no-store.
+paths:
+  /health/live:
+    get:
+      operationId: liveness
+      security: []
+      description: Process liveness; does not imply database or identity readiness. No-store.
+      responses:
+        '200':
+          description: Process is running
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Request-ID:
+              schema: { type: string, format: uuid }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [status]
+                    properties:
+                      status: { type: string, const: ok }
+        '403':
+          $ref: '#/components/responses/Error'
+  /health/ready:
+    get:
+      operationId: readiness
+      security: []
+      description: Performs bounded SELECT 1. Draining or failed database yields 503; no dependency details exposed. No-store.
+      responses:
+        '200':
+          description: Database is reachable and process accepts work
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Request-ID:
+              schema: { type: string, format: uuid }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [status]
+                    properties:
+                      status: { type: string, const: ready }
+        '503':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/v1/auth/csrf:
+    get:
+      operationId: "authcsrf"
+      description: "Returns a ten-minute token bound to the session or an anonymous HttpOnly cookie."
+      responses:
+        '200':
+          description: "CSRF bootstrap"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+                    required:
+                      - "csrfToken"
+                    properties:
+                      csrfToken:
+                        type: "string"
+        '403':
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/local-login:
+    post:
+      operationId: "authLocalLogin"
+      description: "Development-only local login. Requires AUTH_MODE=local, NODE_ENV=development, loopback listener and origins."
+      security:
+        -
+          localAnonymousCookie: []
+          csrfHeader: []
+      parameters:
+        -
+          name: "Origin"
+          in: "header"
+          schema:
+            type: "string"
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: "object"
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: "string", format: "email", maxLength: 254 }
+                password: { type: "string", minLength: 1, maxLength: 1024 }
+      responses:
+        '200':
+          description: "Authenticated; sets an opaque HttpOnly local session cookie."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required: [data]
+                properties:
+                  data:
+                    type: "object"
+                    required: [authenticated]
+                    properties:
+                      authenticated: { type: "boolean", const: true }
+        '401':
+          $ref: "#/components/responses/Error"
+        '403':
+          $ref: "#/components/responses/Error"
+        '422':
+          $ref: "#/components/responses/Error"
+        '429':
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"  /api/v1/auth/login:
+    post:
+      operationId: "authlogin"
+      description: "Starts browser-bound Cognito authorization. Send cookies and the exact allowed origin."
+      security:
+        -
+          sessionCookie: []
+          csrfHeader: []
+        -
+          anonymousCookie: []
+          csrfHeader: []
+      parameters:
+        -
+          name: "Origin"
+          in: "header"
+          schema:
+            type: "string"
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              additionalProperties: false
+        required: false
+      responses:
+        '200':
+          description: "Navigate to the returned URL"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+                    required:
+                      - "authorizationUrl"
+                    properties:
+                      authorizationUrl:
+                        type: "string"
+                        format: "uri"
+        '403':
+          $ref: "#/components/responses/Error"
+        '422':
+          $ref: "#/components/responses/Error"
+        '429':
+          $ref: "#/components/responses/Error"
+        '503':
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/callback:
+    get:
+      operationId: "authcallback"
+      description: "Consumes the five-minute OIDC attempt and checks PKCE, state, nonce and verified identity. Sets a new HttpOnly session cookie."
+      security:
+        -
+          attemptCookie: []
+      parameters:
+        -
+          name: "code"
+          in: "query"
+          schema:
+            type: "string"
+          required: true
+        -
+          name: "state"
+          in: "query"
+          schema:
+            type: "string"
+          required: true
+        -
+          name: "iss"
+          in: "query"
+          schema:
+            type: "string"
+          required: false
+      responses:
+        '303':
+          description: "Redirect to configured frontend /workspace"
+          headers:
+            Location:
+              schema:
+                type: "string"
+                format: "uri"
+        '401':
+          $ref: "#/components/responses/Error"
+        '429':
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/session:
+    get:
+      operationId: "authsession"
+      security:
+        -
+          sessionCookie: []
+      description: "Checks the current user and session in PostgreSQL. Staff grants require server provisioning; grants are currently empty."
+      responses:
+        '200':
+          description: "Current session"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required:
+                  - "data"
+                properties:
+                  data:
+                    type: "object"
+                    required:
+                      - "user"
+                      - "grants"
+                      - "expiresAt"
+                    properties:
+                      user:
+                        type: "object"
+                        required:
+                          - "id"
+                          - "name"
+                          - "email"
+                          - "roles"
+                          - "role"
+                        properties:
+                          id:
+                            type: "string"
+                            format: "uuid"
+                          name:
+                            type: "string"
+                          email:
+                            type: "string"
+                            format: "email"
+                          roles:
+                            type: "array"
+                            maxItems: 0
+                            items: {}
+                          role:
+                            type: "null"
+                      grants:
+                        type: "array"
+                        maxItems: 0
+                        items: {}
+                      expiresAt:
+                        type: "string"
+                        format: "date-time"
+        '401':
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/logout:
+    post:
+      operationId: "authlogout"
+      security:
+        -
+          sessionCookie: []
+          csrfHeader: []
+        -
+          anonymousCookie: []
+          csrfHeader: []
+      parameters:
+        -
+          name: "Origin"
+          in: "header"
+          schema:
+            type: "string"
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              additionalProperties: false
+        required: false
+      description: "Revokes the local session before clearing cookies. Hosted SSO is independent."
+      responses:
+        '204':
+          description: "Cookies cleared"
+        '403':
+          $ref: "#/components/responses/Error"
+        '422':
+          $ref: "#/components/responses/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/applications:
+    "post":
+      "operationId": "createApplication"
+      "description": "Creates an owner-bound draft for a matching published programme version. Auth disabled yields 404. No client owner or role accepted."
+      "security":
+        -
+          "sessionCookie": []
+          "csrfHeader": []
+      "parameters":
+        -
+          "name": "Origin"
+          "in": "header"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uri"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "additionalProperties": false
+              "required":
+                - "programmeId"
+                - "programmeVersionId"
+              "properties":
+                "programmeId":
+                  "type": "string"
+                  "format": "uuid"
+                "programmeVersionId":
+                  "type": "string"
+                  "format": "uuid"
+      "responses":
+        "201":
+          "description": "Authorized result"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "additionalProperties": false
+                "required":
+                  - "data"
+                "properties":
+                  "data":
+                    "$ref": "#/components/schemas/Application"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "422":
+          "$ref": "#/components/responses/Error"
+        "500":
+          "$ref": "#/components/responses/Error"
+  /api/v1/applications/{id}:
+    "get":
+      "operationId": "readApplication"
+      "description": "Current owner only. Inaccessible and nonexistent records both return 404."
+      "security":
+        -
+          "sessionCookie": []
+      "parameters":
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Authorized result"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "additionalProperties": false
+                "required":
+                  - "data"
+                "properties":
+                  "data":
+                    "$ref": "#/components/schemas/Application"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "422":
+          "$ref": "#/components/responses/Error"
+        "500":
+          "$ref": "#/components/responses/Error"
+    "patch":
+      "operationId": "updateApplication"
+      "description": "Replaces six draft fields. Stale revision or submitted intake returns 409. Send session cookie, exact Origin and bound CSRF token."
+      "security":
+        -
+          "sessionCookie": []
+          "csrfHeader": []
+      "parameters":
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        -
+          "name": "Origin"
+          "in": "header"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uri"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "additionalProperties": false
+              "required":
+                - "expectedRevision"
+                - "fields"
+              "properties":
+                "expectedRevision":
+                  "type": "integer"
+                  "minimum": 0
+                  "maximum": 2147483646
+                "fields":
+                  "$ref": "#/components/schemas/DraftFields"
+      "responses":
+        "200":
+          "description": "Authorized result"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "additionalProperties": false
+                "required":
+                  - "data"
+                "properties":
+                  "data":
+                    "$ref": "#/components/schemas/Application"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "422":
+          "$ref": "#/components/responses/Error"
+        "500":
+          "$ref": "#/components/responses/Error"
+  /api/v1/applications/{id}/submit:
+    "post":
+      "operationId": "submitApplication"
+      "description": "Creates one version-1 snapshot, receipt and audit/outbox transaction. Identical key and revision returns the original receipt, including after intake closes. Changed revision with same key returns 409."
+      "security":
+        -
+          "sessionCookie": []
+          "csrfHeader": []
+      "parameters":
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        -
+          "name": "Origin"
+          "in": "header"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uri"
+        -
+          "name": "Idempotency-Key"
+          "in": "header"
+          "required": true
+          "schema":
+            "type": "string"
+            "minLength": 1
+            "maxLength": 128
+            "pattern": "^[A-Za-z0-9_-]+$"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "additionalProperties": false
+              "required":
+                - "expectedRevision"
+              "properties":
+                "expectedRevision":
+                  "type": "integer"
+                  "minimum": 0
+                  "maximum": 2147483646
+      "responses":
+        "200":
+          "description": "Authorized result"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "additionalProperties": false
+                "required":
+                  - "data"
+                "properties":
+                  "data":
+                    "$ref": "#/components/schemas/Submission"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "422":
+          "$ref": "#/components/responses/Error"
+        "500":
+          "$ref": "#/components/responses/Error"
+  /api/v1/applications/{id}/submissions/{versionId}:
+    "get":
+      "operationId": "readSubmission"
+      "description": "Returns the authorized immutable snapshot after restart. No audit or staff-only fields returned."
+      "security":
+        -
+          "sessionCookie": []
+      "parameters":
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        -
+          "name": "versionId"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Authorized result"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "additionalProperties": false
+                "required":
+                  - "data"
+                "properties":
+                  "data":
+                    "$ref": "#/components/schemas/Submission"
+        "401":
+          "$ref": "#/components/responses/Error"
+        "403":
+          "$ref": "#/components/responses/Error"
+        "404":
+          "$ref": "#/components/responses/Error"
+        "409":
+          "$ref": "#/components/responses/Error"
+        "422":
+          "$ref": "#/components/responses/Error"
+        "500":
+          "$ref": "#/components/responses/Error"
+  /api/v1/officer/submissions/{submissionVersionId}:
+    get:
+      operationId: readAssignedOfficerSubmission
+      description: >-
+        Registered only when AUTH_ENABLED and OFFICER_READ_API_ENABLED are true.
+        OFFICER_READ_API_ENABLED defaults to false. Requires a live session, active
+        programme-scoped eligibility.read-submission grant, exact-version assignment
+        and controlled conflict clearance. Self-review is always denied. No mutation
+        CSRF token is required for this GET; existing origin checks still apply.
+        Assignment provisioning and conflict resolution are separate controlled operations.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: submissionVersionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Authorized version-1 projection; no team, raw JSON or authentication records.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Request-ID:
+              schema: { type: string, format: uuid }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/OfficerSubmission' }
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          description: Feature/authentication disabled, submission missing, or access concealed. No protected data returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OfficerReadError' }
+        '422':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+components:
+  schemas:
+    OfficerReadError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string, format: uuid }
+    OfficerSubmission:
+      type: object
+      additionalProperties: false
+      required: [submissionVersionId, applicationId, programmeId, programmeVersionId, submissionVersionNumber, reference, submittedAt, submissionFields]
+      properties:
+        submissionVersionId: { type: string, format: uuid }
+        applicationId: { type: string, format: uuid }
+        programmeId: { type: string, format: uuid }
+        programmeVersionId: { type: string, format: uuid }
+        submissionVersionNumber: { type: integer, const: 1 }
+        reference: { type: string, maxLength: 64 }
+        submittedAt: { type: string, format: date-time }
+        submissionFields:
+          type: object
+          additionalProperties: false
+          required: [title, theme, problem, solution, impact]
+          properties:
+            title: { type: string, maxLength: 120 }
+            theme: { type: string, maxLength: 100 }
+            problem: { type: string, maxLength: 3000 }
+            solution: { type: string, maxLength: 5000 }
+            impact: { type: string, maxLength: 3000 }
+    "DraftFields":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "title"
+        - "theme"
+        - "problem"
+        - "solution"
+        - "impact"
+        - "team"
+      "properties":
+        "title":
+          "type": "string"
+          "maxLength": 120
+        "theme":
+          "type": "string"
+          "maxLength": 100
+        "problem":
+          "type": "string"
+          "maxLength": 3000
+        "solution":
+          "type": "string"
+          "maxLength": 5000
+        "impact":
+          "type": "string"
+          "maxLength": 3000
+        "team":
+          "type": "string"
+          "maxLength": 150
+    "Application":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "ownerId"
+        - "programmeId"
+        - "programmeVersionId"
+        - "revision"
+        - "stage"
+        - "fields"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "ownerId":
+          "type": "string"
+          "format": "uuid"
+        "programmeId":
+          "type": "string"
+          "format": "uuid"
+        "programmeVersionId":
+          "type": "string"
+          "format": "uuid"
+        "revision":
+          "type": "integer"
+          "minimum": 0
+          "maximum": 2147483647
+        "stage":
+          "type": "string"
+          "enum":
+            - "DRAFT"
+            - "SUBMITTED"
+        "fields":
+          "$ref": "#/components/schemas/DraftFields"
+    "Submission":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "applicationId"
+        - "programmeVersionId"
+        - "reference"
+        - "revision"
+        - "fields"
+        - "submittedAt"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "applicationId":
+          "type": "string"
+          "format": "uuid"
+        "programmeVersionId":
+          "type": "string"
+          "format": "uuid"
+        "reference":
+          "type": "string"
+          "maxLength": 64
+        "revision":
+          "type": "integer"
+          "minimum": 0
+          "maximum": 2147483647
+        "fields":
+          "$ref": "#/components/schemas/DraftFields"
+        "submittedAt":
+          "type": "string"
+          "format": "date-time"
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: __Host-ceda_session }
+    anonymousCookie: { type: apiKey, in: cookie, name: __Host-ceda_csrf }
+    attemptCookie: { type: apiKey, in: cookie, name: __Host-ceda_oidc }
+    csrfHeader: { type: apiKey, in: header, name: X-CSRF-Token }
+    localAnonymousCookie: { type: apiKey, in: cookie, name: dev_ceda_csrf }
+  responses:
+    Error:
+      description: Safe error envelope (including denied origins); no-store
+      headers:
+        Cache-Control:
+          schema: { type: string, const: no-store }
+        X-Request-ID:
+          schema: { type: string, format: uuid }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message, requestId]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+                  requestId: { type: string, format: uuid }

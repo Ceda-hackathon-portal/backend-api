@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client"
+  output = "../generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Generic fixtures only. These are not the CEDA production domain schema.
+model Probe {
+  id String @id @default(uuid()) @db.Uuid
+  revision Int @default(0)
+  optionalText String? @map("optional_text")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  snapshots ProbeSnapshot[]
+  @@map("spike_probes")
+}
+
+model ProbeSnapshot {
+  id String @id @default(uuid()) @db.Uuid
+  probeId String @map("probe_id") @db.Uuid
+  number Int
+  title String @db.VarChar(120)
+  amount Decimal @db.Decimal(8,3)
+  payload Json
+  probe Probe @relation(fields: [probeId], references: [id], onDelete: Restrict)
+  @@unique([probeId, number])
+  @@map("spike_snapshots")
+}

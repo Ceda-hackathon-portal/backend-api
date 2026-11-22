@@ -1,0 +1,86 @@
+name: ceda-staging
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-bookworm}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ceda_staging
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    command: [postgres, -c, ssl=on, -c, ssl_cert_file=/run/tls/server.crt, -c, ssl_key_file=/run/tls/server.key, -c, hba_file=/etc/postgres/pg_hba.conf, -c, shared_buffers=128MB, -c, max_connections=30]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./private/tls:/run/tls:ro
+      - ./pg_hba.conf:/etc/postgres/pg_hba.conf:ro
+    networks: [database]
+    mem_limit: 768m
+    logging: {driver: json-file, options: {max-size: 5m, max-file: '3'}}
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U postgres -d ceda_staging']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  api:
+    image: ${API_IMAGE:?Select the reviewed API image}
+    restart: unless-stopped
+    env_file: ./private/api.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '3001'
+      DATABASE_SSL: 'true'
+      DATABASE_CA_FILE: /run/db/ca.crt
+      TRUST_PROXY: 172.29.67.2/32
+    volumes:
+      - ./private/tls/ca.crt:/run/db/ca.crt:ro
+    networks: [edge, database]
+    depends_on:
+      postgres: {condition: service_healthy}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 20s
+    mem_limit: 384m
+    pids_limit: 128
+    logging: {driver: json-file, options: {max-size: 5m, max-file: '3'}}
+  proxy:
+    image: ${CADDY_IMAGE:-caddy:2}
+    restart: unless-stopped
+    environment:
+      API_HOST: ${API_HOST:?Set approved API DNS name}
+      ACME_EMAIL: ${ACME_EMAIL:?Set certificate contact email}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      edge: {ipv4_address: 172.29.67.2}
+    depends_on:
+      api: {condition: service_healthy}
+    mem_limit: 128m
+    logging: {driver: json-file, options: {max-size: 5m, max-file: '3'}}
+  migration:
+    image: ${MIGRATION_IMAGE:?Select the reviewed migration image}
+    profiles: [tools]
+    env_file: ./private/migration.env
+    volumes:
+      - ./private/tls/ca.crt:/run/db/ca.crt:ro
+    networks: [database]
+    # The image defaults to migrate status. Deploy must be invoked explicitly.
+    depends_on:
+      postgres: {condition: service_healthy}
+secrets:
+  postgres_password:
+    file: ./private/postgres_password
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+networks:
+  edge:
+    ipam:
+      config: [{subnet: 172.29.67.0/24}]
+  database:
+    internal: true

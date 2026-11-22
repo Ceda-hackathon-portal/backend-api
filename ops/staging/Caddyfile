@@ -1,0 +1,17 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+    log default {
+        output stdout
+        format filter {
+            wrap json
+            fields {
+                request>uri delete
+                request>headers delete
+            }
+        }
+    }
+}
+{$API_HOST} {
+    reverse_proxy api:3001
+}

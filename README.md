@@ -39,7 +39,18 @@ npm.cmd run db:validate
 npm.cmd run typecheck
 npm.cmd test
 npm.cmd run test:smoke
+npm.cmd run test:database
 ```
+
+`test:database` is Windows-only: install the pinned portable tools as described in `spikes/prisma7/README.md`. It starts and stops its own loopback PostgreSQL 17 cluster and ignores any configured database URL.
+
+### Signing in locally
+
+Local password sign-in is for development only. Run `npm run auth:hash-local-password` in an interactive terminal, then set `AUTH_MODE=local`, `AUTH_ENABLED=false`, `AUTH_LOCAL_EMAIL`, the generated `AUTH_LOCAL_PASSWORD_HASH` and a random 64-hex `AUTH_ENCRYPTION_KEY` in the ignored `.env`. Keep `HOST=127.0.0.1` and use the same loopback hostname for the API and front-end origins. The server refuses this mode anywhere else. It grants no roles.
+
+Export the reviewed `DATABASE_URL` before migrating. The runtime uses the restricted role in `ops/runtime-role.sql`.
+
+More: [implemented front-end API handoff](docs/FRONTEND_API_HANDOFF.md), [OpenAPI](docs/openapi.yaml), [browser authentication](docs/AUTH_CONTRACT.md), [AWS staging preparation](docs/AWS_STAGING.md).
 
 ## Branching and reviews
 
@@ -74,16 +85,9 @@ Create a GitHub environment named `production` (Settings → Environments) and a
 | Variable | `ECS_CONTAINER_NAME` | Container name inside that task definition |
 | Variable | `API_URL` | Public URL of the API (shown on each deployment) |
 
-## Migrating the existing backend
+## Origin of this code
 
-The backend currently lives in `backend/` of the earlier `CedaHackathon` repository. Move it here without history:
-
-1. Copy the tracked contents of `backend/` to this repository's root: `src/`, `prisma/`, `tests/`, `docs/`, `ops/`, `spikes/`, `Dockerfile`, `package.json`, `package-lock.json`, `prisma.config.ts`, `tsconfig.json`, `AGENTS.md`.
-2. `.env.example`, `.node-version`, `.dockerignore` and `.gitignore` are already here and match the original.
-3. Merge the original `backend/README.md` into this README rather than overwriting it.
-4. Do not copy `.github/workflows/backend-ci.yml`. `ci.yml` here replaces it, with paths adjusted for the repository root.
-5. Bring along the shared documents from the old root that concern the API: `docs/BACKEND_ARCHITECTURE_HANDOFF.md` and `docs/codex/`.
-6. Open a PR. CI starts as soon as `package-lock.json` exists.
+Migrated without history from `backend/` of `Batoli19/CedaHackathon` at `002af63` (22 November 2026). Paths in older documents that start with `backend/` refer to this repository's root.
 
 ## Requirements this API serves
 

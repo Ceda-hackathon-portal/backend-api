@@ -1,0 +1,681 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AuthUser {
+  id              String           @id @default(uuid()) @db.Uuid
+  email           String           @unique @db.VarChar(254)
+  name            String           @db.VarChar(100)
+  status          String           @default("ACTIVE")
+  applications    Application[]
+  applicationDocuments ApplicationDocument[]
+  grants          ProgrammeGrant[] @relation("GrantSubject")
+  grantsIssued    ProgrammeGrant[] @relation("GrantIssuer")
+  commandReceipts CommandReceipt[]
+  auditEvents     AuditEvent[]
+  outboxEvents    OutboxEvent[]
+  identities      AuthIdentity[]
+  sessions        AuthSession[]
+  eligibilityChecks EligibilityCheck[]
+  eligibilityReviews OfficerReview[]
+  officerAssignments OfficerAssignment[]
+  officerAssignmentsIssued OfficerAssignment[] @relation("OfficerAssignmentIssuer")
+  officerAssignmentsRevoked OfficerAssignment[] @relation("OfficerAssignmentRevoker")
+  conflictDisclosures ConflictDisclosure[] @relation("ConflictDiscloser")
+  conflictResolutions ConflictDisclosure[] @relation("ConflictResolver")
+  workflowEvents WorkflowEvent[]
+  workflowReceipts WorkflowCommandReceipt[]
+  evaluations Evaluation[] @relation("EvaluationReviewer")
+  adjudications AdjudicationDecision[]
+  decisionAudits DecisionAudit[]
+  decisionReceipts DecisionCommandReceipt[]
+  outcomeReleases OutcomeRelease[]
+  outcomeReleaseReceipts OutcomeReleaseReceipt[]
+
+  @@map("users")
+}
+
+model AuthIdentity {
+  id      String   @id @default(uuid()) @db.Uuid
+  issuer  String
+  subject String
+  userId  String   @map("user_id") @db.Uuid
+  user    AuthUser @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([issuer, subject])
+  @@map("identities")
+}
+
+model AuthSession {
+  id                String    @id @default(uuid()) @db.Uuid
+  tokenHash         String    @unique @map("token_hash") @db.Char(64)
+  userId            String    @map("user_id") @db.Uuid
+  idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(3)
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  user              AuthUser  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([absoluteExpiresAt])
+  @@map("sessions")
+}
+
+model AuthAttempt {
+  tokenHash String   @id @map("token_hash") @db.Char(64)
+  payload   String
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("auth_attempts")
+}
+
+// REVIEW ONLY. Append these models to a COPY of the runtime schema.
+// AuthUser additions: applications Application[], grants ProgrammeGrant[]
+// AuthUser also needs named inverse relations shown in APPLICATION_SCHEMA_APPROVAL.md.
+model Programme {
+  id       String             @id @default(uuid()) @db.Uuid
+  code     String             @unique @db.VarChar(64)
+  name     String             @db.VarChar(200)
+  versions ProgrammeVersion[]
+  grants   ProgrammeGrant[]
+  eligibilityRuleVersions EligibilityRuleVersion[]
+  eligibilityChecks EligibilityCheck[]
+  officerAssignments OfficerAssignment[]
+
+  @@map("programmes")
+}
+
+model ProgrammeVersion {
+  id           String        @id @default(uuid()) @db.Uuid
+  programmeId  String        @map("programme_id") @db.Uuid
+  version      Int
+  publishedAt  DateTime      @map("published_at") @db.Timestamptz(3)
+  opensAt      DateTime      @map("opens_at") @db.Timestamptz(3)
+  closesAt     DateTime      @map("closes_at") @db.Timestamptz(3)
+  config       Json
+  programme    Programme     @relation(fields: [programmeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  applications Application[]
+  eligibilityRuleVersions EligibilityRuleVersion[]
+
+  @@unique([programmeId, version])
+  @@unique([id, programmeId])
+  @@map("programme_versions")
+}
+
+model ProgrammeGrant {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  programmeId String    @map("programme_id") @db.Uuid
+  permission  String    @db.VarChar(100)
+  grantedById String    @map("granted_by_id") @db.Uuid
+  grantedAt   DateTime  @default(now()) @map("granted_at") @db.Timestamptz(3)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(3)
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(3)
+  user        AuthUser  @relation("GrantSubject", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  grantedBy   AuthUser  @relation("GrantIssuer", fields: [grantedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  programme   Programme @relation(fields: [programmeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([userId, programmeId, permission])
+  @@index([programmeId])
+  @@index([grantedById])
+  @@map("programme_grants")
+}
+
+model Application {
+  id                 String              @id @default(uuid()) @db.Uuid
+  ownerId            String              @map("owner_id") @db.Uuid
+  programmeId        String              @map("programme_id") @db.Uuid
+  programmeVersionId String              @map("programme_version_id") @db.Uuid
+  revision           Int                 @default(0)
+  stage              String              @default("DRAFT") @db.VarChar(32)
+  draft              Json
+  budget             Json                @default("{\"items\":[],\"fundingRequested\":\"\",\"notApplicable\":false}")
+  documents           ApplicationDocument[]
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  owner              AuthUser            @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  programmeVersion   ProgrammeVersion    @relation(fields: [programmeVersionId, programmeId], references: [id, programmeId], onDelete: Restrict, onUpdate: Restrict)
+  submissions        SubmissionVersion[]
+  audits             AuditEvent[]
+  eligibilityChecks  EligibilityCheck[]
+  officerAssignments OfficerAssignment[]
+  assignmentProgrammeRows OfficerAssignment[] @relation("AssignmentApplicationProgramme")
+  officerReviews     OfficerReview[]
+  workflowState      StateSnapshot?
+  workflowEvents     WorkflowEvent[]
+  evaluations Evaluation[]
+  evaluationAudits EvaluationAudit[]
+  decision AdjudicationDecision?
+  decisionAudits DecisionAudit[]
+  outcomeRelease OutcomeRelease?
+
+  @@unique([id, programmeVersionId])
+  @@unique([id, programmeId])
+  @@index([ownerId, updatedAt])
+  @@index([programmeVersionId, programmeId])
+  @@map("applications")
+}
+
+model SubmissionVersion {
+  id                 String           @id @default(uuid()) @db.Uuid
+  applicationId      String           @map("application_id") @db.Uuid
+  programmeVersionId String           @map("programme_version_id") @db.Uuid
+  version            Int
+  revision           Int
+  reference          String           @unique @db.VarChar(64)
+  fields             Json
+  budget             Json                @default("{\"items\":[],\"fundingRequested\":\"\",\"notApplicable\":false}")
+  documents           ApplicationDocument[]
+  submittedAt        DateTime         @default(now()) @map("submitted_at") @db.Timestamptz(3)
+  application        Application      @relation(fields: [applicationId, programmeVersionId], references: [id, programmeVersionId], onDelete: Restrict, onUpdate: Restrict)
+  receipts           CommandReceipt[]
+  eligibilityChecks EligibilityCheck[]
+  officerAssignments OfficerAssignment[]
+  officerReviews OfficerReview[]
+  workflows StateSnapshot[]
+  workflowEvents WorkflowEvent[]
+  evaluations Evaluation[]
+  evaluationAudits EvaluationAudit[]
+  decision AdjudicationDecision?
+  decisionAudits DecisionAudit[]
+  outcomeRelease OutcomeRelease?
+
+  @@unique([applicationId, version])
+  @@unique([id, applicationId])
+  @@index([applicationId, programmeVersionId])
+  @@map("submission_versions")
+}
+
+model ApplicationDocument {
+  id                 String            @id @db.Uuid
+  applicationId      String            @map("application_id") @db.Uuid
+  ownerId            String            @map("owner_id") @db.Uuid
+  submissionVersionId String?          @map("submission_version_id") @db.Uuid
+  category           String            @db.VarChar(64)
+  originalName       String            @map("original_name") @db.VarChar(200)
+  contentType        String            @map("content_type") @db.VarChar(100)
+  sizeBytes          Int               @map("size_bytes")
+  sha256             String            @db.Char(64)
+  expiresAt          DateTime?          @map("expires_at") @db.Date
+  storageKey         String            @unique @map("storage_key") @db.Uuid
+  uploadedAt         DateTime          @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+  application        Application       @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  owner              AuthUser          @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  submission         SubmissionVersion? @relation(fields: [submissionVersionId], references: [id], onDelete: Restrict)
+  @@index([applicationId, uploadedAt])
+  @@index([submissionVersionId])
+  @@map("application_documents")
+}
+
+model CommandReceipt {
+  id                  String            @id @default(uuid()) @db.Uuid
+  actorId             String            @map("actor_id") @db.Uuid
+  applicationId       String            @map("application_id") @db.Uuid
+  operation           String            @db.VarChar(64)
+  key                 String            @db.VarChar(128)
+  requestHash         String            @map("request_hash") @db.Char(64)
+  submissionVersionId String            @map("submission_version_id") @db.Uuid
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor               AuthUser          @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submission          SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([actorId, applicationId, operation, key])
+  @@index([submissionVersionId, applicationId])
+  @@map("command_receipts")
+}
+
+model AuditEvent {
+  id            String        @id @default(uuid()) @db.Uuid
+  actorId       String        @map("actor_id") @db.Uuid
+  applicationId String        @map("application_id") @db.Uuid
+  action        String        @db.VarChar(100)
+  revision      Int
+  requestId     String        @map("request_id") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor         AuthUser      @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  application   Application   @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  outbox        OutboxEvent[]
+
+  @@unique([applicationId, revision])
+  @@index([actorId, createdAt])
+  @@index([requestId])
+  @@map("audit_events")
+}
+
+model OutboxEvent {
+  id           String     @id @default(uuid()) @db.Uuid
+  auditEventId String     @map("audit_event_id") @db.Uuid
+  recipientId  String     @map("recipient_id") @db.Uuid
+  kind         String     @db.VarChar(100)
+  attempts     Int        @default(0)
+  availableAt  DateTime   @default(now()) @map("available_at") @db.Timestamptz(3)
+  deliveredAt  DateTime?  @map("delivered_at") @db.Timestamptz(3)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  audit        AuditEvent @relation(fields: [auditEventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipient    AuthUser   @relation(fields: [recipientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([auditEventId, recipientId, kind])
+  @@index([deliveredAt, availableAt])
+  @@index([recipientId])
+  @@map("outbox_events")
+}
+
+model EligibilityRuleVersion {
+  id                 String   @id @default(uuid()) @db.Uuid
+  programmeId        String   @map("programme_id") @db.Uuid
+  programmeVersionId String   @map("programme_version_id") @db.Uuid
+  version            Int
+  schemaVersion      Int      @map("schema_version")
+  snapshot           Json
+  digest             String   @db.Char(64)
+  publishedAt        DateTime @map("published_at") @db.Timestamptz(3)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  programme          Programme @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  programmeVersion   ProgrammeVersion @relation(fields: [programmeVersionId, programmeId], references: [id, programmeId], onDelete: Restrict)
+  checks             EligibilityCheck[]
+  @@unique([programmeId, version])
+  @@unique([id, programmeId, programmeVersionId])
+  @@map("eligibility_rule_versions")
+}
+
+model EligibilityCheck {
+  id                 String   @id @default(uuid()) @db.Uuid
+  applicationId      String   @map("application_id") @db.Uuid
+  programmeId        String   @map("programme_id") @db.Uuid
+  programmeVersionId String   @map("programme_version_id") @db.Uuid
+  submissionVersionId String  @map("submission_version_id") @db.Uuid
+  ruleVersionId      String   @map("rule_version_id") @db.Uuid
+  requestedById      String   @map("requested_by_id") @db.Uuid
+  operationKey       String   @map("operation_key") @db.VarChar(128)
+  requestHash        String   @map("request_hash") @db.Char(64)
+  overallStatus      String   @map("overall_status") @db.VarChar(16)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  application        Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  submission         SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict)
+  programme          Programme @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  ruleVersion        EligibilityRuleVersion @relation(fields: [ruleVersionId, programmeId, programmeVersionId], references: [id, programmeId, programmeVersionId], onDelete: Restrict)
+  requester          AuthUser @relation(fields: [requestedById], references: [id], onDelete: Restrict)
+  findings           EligibilityFinding[]
+  audit EligibilityAudit?
+  reviews            OfficerReview[]
+  workflowStates StateSnapshot[]
+  workflowEvents WorkflowEvent[]
+  @@unique([requestedById, applicationId, operationKey])
+  @@unique([id, applicationId, submissionVersionId])
+  @@index([submissionVersionId, createdAt])
+  @@map("eligibility_checks")
+}
+
+model EligibilityFinding {
+  id             String   @id @default(uuid()) @db.Uuid
+  checkId        String   @map("check_id") @db.Uuid
+  applicationId  String   @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  requirementId  String   @map("requirement_id") @db.VarChar(100)
+  status         String   @db.VarChar(16)
+  unknownReason  String?  @map("unknown_reason") @db.VarChar(32)
+  evidence       Json     @default("[]")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  check          EligibilityCheck @relation(fields: [checkId, applicationId, submissionVersionId], references: [id, applicationId, submissionVersionId], onDelete: Restrict)
+  @@unique([checkId, requirementId])
+  @@map("eligibility_findings")
+}
+
+model OfficerAssignment {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  programmeId String @map("programme_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  issuedById String? @map("issued_by_id") @db.Uuid
+  issuedRequestId String? @map("issued_request_id") @db.Uuid
+  requestHash String? @map("request_hash") @db.Char(64)
+  status String @default("ACTIVE") @db.VarChar(16)
+  validFrom DateTime @default(now()) @map("valid_from") @db.Timestamptz(3)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedById String? @map("revoked_by_id") @db.Uuid
+  revocationReason String? @map("revocation_reason") @db.VarChar(1000)
+  revocationRequestId String? @map("revocation_request_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  applicationProgramme Application @relation("AssignmentApplicationProgramme", fields: [applicationId, programmeId], references: [id, programmeId], onDelete: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict)
+  programme Programme @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  actor AuthUser @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  issuer AuthUser? @relation("OfficerAssignmentIssuer", fields: [issuedById], references: [id], onDelete: Restrict)
+  revoker AuthUser? @relation("OfficerAssignmentRevoker", fields: [revokedById], references: [id], onDelete: Restrict)
+  conflicts ConflictDisclosure[]
+  reviews OfficerReview[]
+  evaluations Evaluation[]
+  @@index([actorId, programmeId, status, expiresAt])
+  @@index([actorId, applicationId, submissionVersionId, programmeId, status, validFrom, expiresAt, revokedAt], map: "officer_assignments_live_scope_idx")
+  @@index([submissionVersionId, actorId])
+  @@unique([issuedRequestId])
+  @@unique([revocationRequestId])
+  @@unique([id, actorId, applicationId, submissionVersionId], map: "officer_assignments_id_actor_application_version_key")
+  @@map("officer_assignments")
+}
+
+model Evaluation {
+  id String @id @default(uuid()) @db.Uuid
+  assignmentId String @map("assignment_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  evaluatorId String @map("evaluator_id") @db.Uuid
+  revision Int @default(0)
+  state String @default("DRAFT") @db.VarChar(16)
+  comment String @default("") @db.VarChar(4000)
+  recommendation String? @db.VarChar(24)
+  total Float?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  finalizedAt DateTime? @map("finalized_at") @db.Timestamptz(3)
+  assignment OfficerAssignment @relation(fields: [assignmentId, evaluatorId, applicationId, submissionVersionId], references: [id, actorId, applicationId, submissionVersionId], onDelete: Restrict, onUpdate: Restrict)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+  evaluator AuthUser @relation("EvaluationReviewer", fields: [evaluatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  scores EvaluationScore[]
+  audits EvaluationAudit[]
+  receipts EvaluationCommandReceipt[]
+  @@unique([assignmentId])
+  @@unique([id, assignmentId, evaluatorId])
+  @@unique([id, applicationId, submissionVersionId, evaluatorId], map: "evaluations_id_application_id_submission_version_id_evaluat_key")
+  @@index([applicationId, submissionVersionId, state], map: "evaluations_application_version_state_idx")
+  @@map("evaluations")
+}
+
+model EvaluationScore {
+  id String @id @default(uuid()) @db.Uuid
+  evaluationId String @map("evaluation_id") @db.Uuid
+  criterionId String @map("criterion_id") @db.VarChar(100)
+  value Float
+  evidence String @db.VarChar(4000)
+  comment String? @db.VarChar(4000)
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([evaluationId, criterionId], map: "evaluation_scores_evaluation_criterion_key")
+  @@map("evaluation_scores")
+}
+
+model EvaluationAudit {
+  id String @id @default(uuid()) @db.Uuid
+  evaluationId String @map("evaluation_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  revision Int
+  requestId String @unique @map("request_id") @db.Uuid
+  action String @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  evaluation Evaluation @relation(fields: [evaluationId, applicationId, submissionVersionId, actorId], references: [id, applicationId, submissionVersionId, evaluatorId], onDelete: Restrict, onUpdate: Restrict)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+  outbox EvaluationOutbox?
+  @@unique([evaluationId, revision], map: "evaluation_audits_evaluation_revision_key")
+  @@index([applicationId, createdAt], map: "evaluation_audits_application_created_idx")
+  @@map("evaluation_audits")
+}
+
+model EvaluationOutbox {
+  auditId String @id @map("audit_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(3)
+  audit EvaluationAudit @relation(fields: [auditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@map("evaluation_outbox")
+}
+
+model EvaluationCommandReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  assignmentId String @map("assignment_id") @db.Uuid
+  evaluatorId String @map("evaluator_id") @db.Uuid
+  evaluationId String @map("evaluation_id") @db.Uuid
+  key String @db.VarChar(128)
+  fingerprint String @db.Char(64)
+  result Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  evaluation Evaluation @relation(fields: [evaluationId, assignmentId, evaluatorId], references: [id, assignmentId, evaluatorId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([assignmentId, evaluatorId, key], map: "evaluation_command_receipts_assignment_actor_key")
+  @@map("evaluation_command_receipts")
+}
+
+model AdjudicationDecision {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @unique @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  programmeId String @map("programme_id") @db.Uuid
+  adjudicatorId String @map("adjudicator_id") @db.Uuid
+  outcome String @db.VarChar(32)
+  reason String @db.VarChar(4000)
+  workflowRevision Int @map("workflow_revision")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  releasedAt DateTime? @map("released_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId, programmeId], references: [id, programmeId], onDelete: Restrict, onUpdate: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+  adjudicator AuthUser @relation(fields: [adjudicatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  audits DecisionAudit[]
+  release OutcomeRelease?
+  @@unique([id, applicationId, submissionVersionId])
+  @@unique([applicationId, programmeId])
+  @@unique([submissionVersionId, applicationId])
+  @@index([programmeId, outcome, createdAt])
+  @@map("adjudication_decisions")
+}
+
+model DecisionAudit {
+  id String @id @default(uuid()) @db.Uuid
+  decisionId String @map("decision_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  workflowRevision Int @map("workflow_revision")
+  requestId String @unique @map("request_id") @db.Uuid
+  action String @db.VarChar(32)
+  reason String @db.VarChar(4000)
+  outcome String @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  decision AdjudicationDecision @relation(fields: [decisionId, applicationId, submissionVersionId], references: [id, applicationId, submissionVersionId], onDelete: Restrict, onUpdate: Restrict)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+  actor AuthUser @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  outbox DecisionOutbox?
+  receipt DecisionCommandReceipt?
+  releaseEvent OutcomeRelease? @relation("ReleaseEvent")
+  @@unique([id, applicationId, actorId])
+  @@unique([decisionId, action])
+  @@index([applicationId, createdAt])
+  @@map("decision_audits")
+}
+
+model DecisionOutbox {
+  auditId String @id @map("audit_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  audit DecisionAudit @relation(fields: [auditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@map("decision_outbox")
+}
+
+model DecisionCommandReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  key String @db.VarChar(128)
+  fingerprint String @db.Text
+  auditId String @unique @map("audit_id") @db.Uuid
+  result Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor AuthUser @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  audit DecisionAudit @relation(fields: [auditId, applicationId, actorId], references: [id, applicationId, actorId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([applicationId, actorId, key])
+  @@unique([auditId, applicationId, actorId])
+  @@map("decision_command_receipts")
+}
+
+model OutcomeRelease {
+  id String @id @default(uuid()) @db.Uuid
+  decisionId String @unique @map("decision_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  programmeId String @map("programme_id") @db.Uuid
+  publisherId String @map("publisher_id") @db.Uuid
+  outcome String @db.VarChar(32)
+  applicantMessage String @map("applicant_message") @db.VarChar(4000)
+  releaseReason String @map("release_reason") @db.VarChar(4000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  decision AdjudicationDecision @relation(fields: [decisionId, applicationId, submissionVersionId], references: [id, applicationId, submissionVersionId], onDelete: Restrict, onUpdate: Restrict)
+  application Application @relation(fields: [applicationId, programmeId], references: [id, programmeId], onDelete: Restrict, onUpdate: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+  publisher AuthUser @relation(fields: [publisherId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  audit DecisionAudit @relation("ReleaseEvent", fields: [releaseAuditId, applicationId, publisherId], references: [id, applicationId, actorId], onDelete: Restrict, onUpdate: Restrict)
+  releaseAuditId String @unique @map("release_audit_id") @db.Uuid
+  receipt OutcomeReleaseReceipt?
+  @@unique([decisionId, applicationId, submissionVersionId])
+  @@unique([applicationId, programmeId])
+  @@unique([submissionVersionId, applicationId])
+  @@unique([releaseAuditId, applicationId, publisherId])
+  @@unique([id, publisherId])
+  @@index([applicationId, submissionVersionId])
+  @@map("outcome_releases")
+}
+
+model OutcomeReleaseReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  releaseId String @unique @map("release_id") @db.Uuid
+  publisherId String @map("publisher_id") @db.Uuid
+  key String @db.VarChar(128)
+  fingerprint String @db.Text
+  result Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  release OutcomeRelease @relation(fields: [releaseId, publisherId], references: [id, publisherId], onDelete: Restrict, onUpdate: Restrict)
+  publisher AuthUser @relation(fields: [publisherId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([releaseId, publisherId, key])
+  @@unique([releaseId, publisherId])
+  @@map("outcome_release_receipts")
+}
+
+model ConflictDisclosure {
+  id String @id @default(uuid()) @db.Uuid
+  assignmentId String @map("assignment_id") @db.Uuid
+  disclosedById String? @map("disclosed_by_id") @db.Uuid
+  disclosedRequestId String? @map("disclosed_request_id") @db.Uuid
+  resolvedById String? @map("resolved_by_id") @db.Uuid
+  resolutionRequestId String? @map("resolution_request_id") @db.Uuid
+  status String @db.VarChar(20)
+  disclosedAt DateTime @default(now()) @map("disclosed_at") @db.Timestamptz(3)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolution String? @db.VarChar(500)
+  assignment OfficerAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  disclosedBy AuthUser? @relation("ConflictDiscloser", fields: [disclosedById], references: [id], onDelete: Restrict)
+  resolvedBy AuthUser? @relation("ConflictResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+  @@index([assignmentId, status])
+  @@unique([disclosedRequestId])
+  @@unique([resolutionRequestId])
+  @@map("conflict_disclosures")
+}
+
+model OfficerReview {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  checkId String @map("check_id") @db.Uuid
+  assignmentId String @map("assignment_id") @db.Uuid
+  reviewerId String @map("reviewer_id") @db.Uuid
+  outcome String @db.VarChar(24)
+  rationale String @db.VarChar(4000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict)
+  check EligibilityCheck @relation(fields: [checkId, applicationId, submissionVersionId], references: [id, applicationId, submissionVersionId], onDelete: Restrict)
+  assignment OfficerAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  reviewer AuthUser @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+  @@index([submissionVersionId, createdAt])
+  @@map("officer_reviews")
+}
+
+model StateSnapshot {
+  applicationId String @id @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  eligibilityCheckId String @map("eligibility_check_id") @db.Uuid
+  state String @db.VarChar(32)
+  revision Int @default(1)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+  eligibilityCheck EligibilityCheck @relation(fields: [eligibilityCheckId, applicationId, submissionVersionId], references: [id, applicationId, submissionVersionId], onDelete: Restrict, onUpdate: Restrict)
+  @@map("workflow_state")
+}
+
+model WorkflowEvent {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  submissionVersionId String @map("submission_version_id") @db.Uuid
+  eligibilityCheckId String @map("eligibility_check_id") @db.Uuid
+  revision Int
+  previousState String @map("previous_state") @db.VarChar(32)
+  nextState String @map("next_state") @db.VarChar(32)
+  actorId String @map("actor_id") @db.Uuid
+  action String @db.VarChar(64)
+  reason String @db.VarChar(2000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  submission SubmissionVersion @relation(fields: [submissionVersionId, applicationId], references: [id, applicationId], onDelete: Restrict, onUpdate: Restrict)
+  eligibilityCheck EligibilityCheck @relation(fields: [eligibilityCheckId, applicationId, submissionVersionId], references: [id, applicationId, submissionVersionId], onDelete: Restrict, onUpdate: Restrict)
+  actor AuthUser @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  receipts WorkflowCommandReceipt[]
+  audit WorkflowAudit?
+  @@unique([applicationId, revision])
+  @@unique([id, applicationId, actorId])
+  @@map("workflow_events")
+}
+
+model WorkflowCommandReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  key String @db.VarChar(128)
+  fingerprint String
+  eventId String @unique @map("event_id") @db.Uuid
+  change Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor AuthUser @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  event WorkflowEvent @relation(fields: [eventId, applicationId, actorId], references: [id, applicationId, actorId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([applicationId, actorId, key])
+  @@map("workflow_command_receipts")
+}
+
+model WorkflowAudit {
+  eventId String @id @map("event_id") @db.Uuid
+  requestId String @map("request_id") @db.Uuid
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  event WorkflowEvent @relation(fields: [eventId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  outbox WorkflowOutbox?
+  @@index([requestId])
+  @@map("workflow_audits")
+}
+
+model WorkflowOutbox {
+  eventId String @id @map("event_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(3)
+  audit WorkflowAudit @relation(fields: [eventId], references: [eventId], onDelete: Restrict, onUpdate: Restrict)
+  @@map("workflow_outbox")
+}
+
+model EligibilityAudit {
+  checkId String @id @map("check_id") @db.Uuid
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  check EligibilityCheck @relation(fields: [checkId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  outbox EligibilityOutbox?
+  @@map("eligibility_audits")
+}
+
+model EligibilityOutbox {
+  checkId String @id @map("check_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(3)
+  audit EligibilityAudit @relation(fields: [checkId], references: [checkId], onDelete: Restrict, onUpdate: Restrict)
+  @@map("eligibility_outbox")
+}
