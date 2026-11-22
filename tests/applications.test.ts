@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { ApplicationService, budgetDto, parseStoredBudget, type Application, type ApplicationRepository, type ApplicationTransaction, type Submission } from '../src/modules/applications/service.js';
+import { ApplicationService, budgetDto, budgetDraftDto, parseStoredBudget, type Application, type ApplicationRepository, type ApplicationTransaction, type Submission } from '../src/modules/applications/service.js';
 function fixture() {
     const owner = { userId: randomUUID(), sessionId: randomUUID(), authnLevel: 'oidc' };
     const other = { ...owner, userId: randomUUID() };
@@ -41,6 +41,19 @@ function fixture() {
     return { service: new ApplicationService(repository), owner, other, programmeId, versionId, state: () => state, failAudit() { failAudit = true; }, ready() { requirementsReady = true; } };
 }
 const fields = { title: 'Idea', theme: 'digital', problem: 'Problem', solution: 'Solution', impact: 'Impact', team: 'Team' };
+test('drafts keep half-typed budget rows that the submission rule rejects', () => {
+    for (const budget of [
+        { items: [{ description: '', amount: '' }], fundingRequested: '', notApplicable: false },
+        { items: [{ description: 'Pump', amount: '' }], fundingRequested: '', notApplicable: false },
+        { items: [{ description: '', amount: '10' }], fundingRequested: '', notApplicable: false },
+        { items: [{ description: 'Pump', amount: '10' }], fundingRequested: '200', notApplicable: false },
+    ]) {
+        assert.deepEqual(budgetDraftDto.parse(budget), budget);
+        assert.deepEqual(parseStoredBudget(budget), budget);
+        assert.equal(budgetDto.safeParse(budget).success, false);
+    }
+    assert.equal(budgetDraftDto.safeParse({ items: [{ description: 'Pump', amount: '-1' }], fundingRequested: '', notApplicable: false }).success, false);
+});
 test('budget validation uses exact decimal amounts and reads legacy rows safely', () => {
     assert.deepEqual(parseStoredBudget({}), { items: [], fundingRequested: '', notApplicable: false });
     const value = budgetDto.parse({ items: [{ description: 'Fictional item', amount: '0.10' }], fundingRequested: '0.10', notApplicable: false });
