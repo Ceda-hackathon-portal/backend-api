@@ -30,7 +30,7 @@ function identifier(value: unknown): string {
     return parsed.data;
 }
 export function applicationRoutes(db: PrismaClient, sessions: SessionVerifier, requireCsrf: (request: Request) => void,
-    options: { screenOnSubmit?: boolean } = {}) {
+    options: { screenOnSubmit?: boolean; requirePrivacyConsent?: boolean } = {}) {
     const router = Router();
     const documentStorage = new LocalPrivateDocumentStorage();
     router.use(async (req, res, next) => {
@@ -121,6 +121,10 @@ export function applicationRoutes(db: PrismaClient, sessions: SessionVerifier, r
         res.json({ data: applicationDto.parse(result) });
     });
     router.post('/:id/submit', validateBody(z.strictObject({ expectedRevision })), async (req, res) => {
+        if (options.requirePrivacyConsent || process.env.NODE_ENV === 'production') {
+            const rows = await db.$queryRaw<Array<{consent_version:string}>>`SELECT consent_version FROM alert_preferences WHERE user_id=${(res.locals.principal as Principal).userId}::uuid AND consent_version='2026-11-23' AND consent_at IS NOT NULL`;
+            if (!rows.length) throw new HttpError(422,'PRIVACY_CONSENT_REQUIRED','Review the privacy notice before submitting.');
+        }
         const key = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).safeParse(req.headers['idempotency-key']);
         if (!key.success)
             throw new HttpError(422, 'VALIDATION_FAILED', 'A valid Idempotency-Key is required.');
