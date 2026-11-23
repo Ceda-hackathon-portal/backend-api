@@ -17,6 +17,7 @@ import { PrismaOfficerSubmissionReader } from './modules/applications/officer-su
 import { PrismaOfficerReviewScope } from './modules/applications/prisma-officer-review-scope.js';
 import { mountEvaluationRoutes } from './infrastructure/evaluation-routes.js';
 import { mountDecisionRoutes } from './infrastructure/decision-routes.js';
+import { mountStaffRoutes } from './modules/staff/routes.js';
 
 async function main() {
   if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Node.js 24 LTS is required.');
@@ -26,17 +27,23 @@ async function main() {
   const database = createDatabase(config, () => logger.error({ code: 'DATABASE_IDLE_ERROR' }, 'database_error'));
   const apiRouter = Router();
   const prisma = authentication ? new PrismaClient({ adapter: new PrismaPg(database.pool, { disposeExternalPool: false }) }) : null;
+  const assignmentDatabase = authentication && config.ASSIGNMENT_DATABASE_URL
+    ? createDatabase({ ...config, DATABASE_URL: config.ASSIGNMENT_DATABASE_URL }, () => logger.error({ code: 'ASSIGNMENT_DATABASE_IDLE_ERROR' }, 'database_error'))
+    : null;
+  const assignmentPrisma = assignmentDatabase ? new PrismaClient({ adapter: new PrismaPg(assignmentDatabase.pool, { disposeExternalPool: false }) }) : null;
   if (authentication && prisma) {
     const provider = authentication.mode === 'cognito' ? new CognitoProvider(authentication) : undefined;
     const auth = authRoutes(authentication, new PrismaSessionStore(prisma), provider);
     apiRouter.use('/auth', auth.router);
-    apiRouter.use('/applications', applicationRoutes(prisma, auth.verifier, auth.requireCsrf));
+    apiRouter.use('/applications', applicationRoutes(prisma, auth.verifier, auth.requireCsrf, { screenOnSubmit: true }));
+    // Before the evaluation and decision routers: the decision router authenticates everything that reaches it.
+    mountStaffRoutes(apiRouter, prisma, assignmentPrisma, auth.verifier, auth.requireCsrf);
     mountOfficerSubmissionRoutes(apiRouter, config, auth.verifier,
       new PrismaOfficerSubmissionReader(prisma, new PrismaOfficerReviewScope()));
     mountEvaluationRoutes(apiRouter, prisma, auth.verifier, auth.requireCsrf);
     mountDecisionRoutes(apiRouter, prisma, auth.verifier, auth.requireCsrf);
   }
-  const resources = { check: () => database.check(), async close() { await prisma?.$disconnect(); await database.close(); } };
+  const resources = { check: () => database.check(), async close() { await prisma?.$disconnect(); await assignmentPrisma?.$disconnect(); await assignmentDatabase?.close(); await database.close(); } };
   let draining = false;
   const server = createServer(createApp(config, { database: resources, logger, isDraining: () => draining, apiRouter }));
   server.headersTimeout = 10000;

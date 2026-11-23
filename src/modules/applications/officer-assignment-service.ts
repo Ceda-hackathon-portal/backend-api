@@ -123,7 +123,8 @@ export class PrismaOfficerAssignmentService {
     }, { maxWait: 5000, timeout: 10000 });
   }
 
-  async discloseConflict(principal: Principal, requestId: string, assignmentId: string): Promise<{ readonly disclosureId: string; readonly replayed: boolean }> {
+  async discloseConflict(principal: Principal, requestId: string, assignmentId: string,
+    declared: 'UNRESOLVED' | 'CONFLICT' = 'UNRESOLVED'): Promise<{ readonly disclosureId: string; readonly replayed: boolean }> {
     const actor = z.object({ userId: uuid, sessionId: uuid, authnLevel: z.string().min(1) }).safeParse(principal);
     const request = uuid.safeParse(requestId), id = uuid.safeParse(assignmentId);
     if (!actor.success || !request.success) throw new HttpError(401, 'UNAUTHENTICATED', 'A valid session is required.');
@@ -141,7 +142,7 @@ export class PrismaOfficerAssignmentService {
         return Object.freeze({ disclosureId: existing.id, replayed: true });
       }
       const disclosure = await tx.conflictDisclosure.create({ data: {
-        assignmentId: id.data, status: 'UNRESOLVED', disclosedById: actor.data.userId, disclosedRequestId: request.data,
+        assignmentId: id.data, status: declared, disclosedById: actor.data.userId, disclosedRequestId: request.data,
       } });
       return Object.freeze({ disclosureId: disclosure.id, replayed: false });
     }, { maxWait: 5000, timeout: 10000 });

@@ -75,11 +75,13 @@ export function authRoutes(config: AuthConfig, store: SessionStore, provider?: I
     router.post('/local-login', validateBody(z.strictObject({ email: z.string().email().max(254), password: z.string().min(1).max(1024) })), async (req, res) => {
       requireCsrf(req);
       const email = String(req.body.email).toLowerCase();
-      const passwordValid = verifyLocalPassword(String(req.body.password), localConfig.passwordHash);
-      const emailBytes = Buffer.from(email); const expectedEmailBytes = Buffer.from(localConfig.email);
+      // An unknown email still costs one password check, so response time does not reveal accounts.
+      const account = localConfig.accounts?.find(item => item.email === email) ?? localConfig;
+      const passwordValid = verifyLocalPassword(String(req.body.password), account.passwordHash);
+      const emailBytes = Buffer.from(email); const expectedEmailBytes = Buffer.from(account.email);
       const emailValid = emailBytes.length === expectedEmailBytes.length && timingSafeEqual(emailBytes, expectedEmailBytes);
       if (!passwordValid || !emailValid) throw new HttpError(401, 'LOGIN_FAILED', 'Sign-in could not be verified.');
-      const identity = { issuer: 'urn:ceda:local-development', subject: localConfig.email, email: localConfig.email, name: localConfig.name };
+      const identity = { issuer: 'urn:ceda:local-development', subject: account.email, email: account.email, name: account.name };
       const raw = token(); const previous = sessionToken(req);
       await store.create(identity, hash(raw), previous ? hash(previous) : null, config.idleSeconds, config.absoluteSeconds);
       res.cookie(names.session, raw, { ...options, maxAge: config.absoluteSeconds * 1000 });

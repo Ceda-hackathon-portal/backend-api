@@ -28,6 +28,8 @@ GRANT SELECT, INSERT ON decision_command_receipts,outcome_releases,outcome_relea
 -- Officer scope is read-only at the application runtime boundary. Assignment issuance,
 -- conflict resolution and revocation use a separately controlled provisioning path.
 GRANT SELECT ON officer_assignments, conflict_disclosures TO ceda_runtime;
+-- An officer's eligibility confirmation is append-only and written only after the assignment scope check.
+GRANT SELECT, INSERT ON officer_reviews TO ceda_runtime;
 GRANT UPDATE ON identities,sessions TO ceda_runtime;
 GRANT UPDATE(id) ON users,programme_grants TO ceda_runtime;
 GRANT UPDATE(draft,budget,revision,stage,updated_at) ON applications TO ceda_runtime;

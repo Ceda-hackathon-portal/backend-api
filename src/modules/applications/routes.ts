@@ -7,6 +7,7 @@ import { HttpError } from '../../shared/errors.js';
 import { validateBody } from '../../shared/validation.js';
 import { ApplicationService, budgetDraftDto, draftFields } from './service.js';
 import { PrismaApplicationRepository } from './repository.js';
+import { PrismaEligibilityScreeningService } from '../eligibility/persistence.js';
 import { LocalPrivateDocumentStorage } from './document-storage.js';
 const uuid = z.string().uuid();
 const revision = z.number().int().nonnegative().max(2147483647);
@@ -28,7 +29,8 @@ function identifier(value: unknown): string {
         throw new HttpError(422, 'VALIDATION_FAILED', 'A valid identifier is required.');
     return parsed.data;
 }
-export function applicationRoutes(db: PrismaClient, sessions: SessionVerifier, requireCsrf: (request: Request) => void) {
+export function applicationRoutes(db: PrismaClient, sessions: SessionVerifier, requireCsrf: (request: Request) => void,
+    options: { screenOnSubmit?: boolean } = {}) {
     const router = Router();
     const documentStorage = new LocalPrivateDocumentStorage();
     router.use(async (req, res, next) => {
@@ -124,6 +126,16 @@ export function applicationRoutes(db: PrismaClient, sessions: SessionVerifier, r
             throw new HttpError(422, 'VALIDATION_FAILED', 'A valid Idempotency-Key is required.');
         const principal = res.locals.principal as Principal;
         const result = await command(principal, res.locals.requestId as string).submit(principal, identifier(req.params.id), req.body.expectedRevision, key.data);
+        if (options.screenOnSubmit) {
+            // Screening reads the immutable submission and only records findings. An officer still decides.
+            const rule = await db.eligibilityRuleVersion.findFirst({
+                where: { programmeVersionId: result.programmeVersionId, publishedAt: { lte: new Date() } }, orderBy: { version: 'desc' },
+            });
+            // The fixed key makes a retried submit return the same screening record.
+            if (rule) await new PrismaEligibilityScreeningService(db).screen(principal, {
+                applicationId: result.applicationId, submissionVersionId: result.id, ruleVersionId: rule.id, idempotencyKey: `submitted_${result.id}`,
+            });
+        }
         res.json({ data: submissionDto.parse(result) });
     });
     router.get('/:id/submissions/:versionId', async (req, res) => {

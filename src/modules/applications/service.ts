@@ -2,10 +2,18 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { HttpError } from '../../shared/errors.js';
 import type { Principal } from '../../shared/authorization.js';
+export const applicantProfile = z.strictObject({
+    fullName: z.string().max(200), email: z.string().max(254), phone: z.string().max(40),
+    companyName: z.string().max(200), registrationNumber: z.string().max(100),
+    registered: z.string().max(20), citizen: z.string().max(20),
+    shareholders: z.array(z.record(z.string().max(40), z.union([z.string().max(200), z.number().finite(), z.boolean()]))).max(30),
+});
 export const draftFields = z.strictObject({
     title: z.string().trim().max(120), theme: z.string().trim().max(100),
     problem: z.string().trim().max(3000), solution: z.string().trim().max(5000),
     impact: z.string().trim().max(3000), team: z.string().trim().max(150),
+    // Never part of the reviewer projection: see projectOfficerSubmissionFields.
+    applicant: applicantProfile.optional(),
     // Optional for backward compatibility. These are unverified applicant
     // inputs bound to the submission snapshot, never officer evidence.
     eligibilityEvidence: z.array(z.strictObject({

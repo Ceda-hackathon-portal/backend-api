@@ -1,15 +1,28 @@
 import { isIP } from 'node:net';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
 interface SharedAuthConfig { apiOrigin: string; frontendOrigin: string; key: string; secure: boolean; idleSeconds: number; absoluteSeconds: number }
 export interface CognitoAuthConfig extends SharedAuthConfig { mode: 'cognito'; issuer: string; clientId: string; clientSecret?: string }
-export interface LocalAuthConfig extends SharedAuthConfig { mode: 'local'; email: string; name: string; passwordHash: string }
+export interface LocalAccount { email: string; name: string; passwordHash: string }
+export interface LocalAuthConfig extends SharedAuthConfig, LocalAccount { mode: 'local'; accounts?: readonly LocalAccount[] }
 export type AuthConfig = CognitoAuthConfig | LocalAuthConfig;
 
 function isLoopbackHost(host: string) {
   const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
   const family = isIP(normalized);
   return normalized === 'localhost' || (family === 4 && normalized.startsWith('127.')) || (family === 6 && normalized === '::1');
+}
+
+/** Extra development sign-ins. An account carries no role: staff access comes only from programme grants. */
+function localAccounts(path: string | undefined): LocalAccount[] {
+  if (!path) return [];
+  try {
+    return z.array(z.strictObject({
+      email: z.string().email().max(254).transform(value => value.toLowerCase()), name: z.string().min(1).max(100),
+      passwordHash: z.string().regex(/^scrypt\$32768\$8\$1\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{86}$/),
+    })).max(30).parse(JSON.parse(readFileSync(path, 'utf8')));
+  } catch { throw new Error('Invalid authentication configuration'); }
 }
 
 export function authConfig(env: NodeJS.ProcessEnv, idleSeconds: number, absoluteSeconds: number): AuthConfig | null {
@@ -27,7 +40,7 @@ export function authConfig(env: NodeJS.ProcessEnv, idleSeconds: number, absolute
     const allowedOrigins = (env.ALLOWED_ORIGINS ?? '').split(',').map(origin => origin.trim());
     if (apiUrl.origin !== v.AUTH_API_ORIGIN || frontendUrl.origin !== v.AUTH_FRONTEND_ORIGIN || apiUrl.protocol !== 'http:' || frontendUrl.protocol !== 'http:' || !isLoopbackHost(apiUrl.hostname) || !isLoopbackHost(frontendUrl.hostname) ||
       apiUrl.hostname !== frontendUrl.hostname || !allowedOrigins.includes(v.AUTH_FRONTEND_ORIGIN)) throw new Error('Invalid authentication origins');
-    return { mode, email: v.AUTH_LOCAL_EMAIL.toLowerCase(), name: v.AUTH_LOCAL_NAME, passwordHash: v.AUTH_LOCAL_PASSWORD_HASH,
+    return { mode, accounts: localAccounts(env.AUTH_LOCAL_ACCOUNTS_FILE), email: v.AUTH_LOCAL_EMAIL.toLowerCase(), name: v.AUTH_LOCAL_NAME, passwordHash: v.AUTH_LOCAL_PASSWORD_HASH,
       apiOrigin: v.AUTH_API_ORIGIN, frontendOrigin: v.AUTH_FRONTEND_ORIGIN, key: v.AUTH_ENCRYPTION_KEY, secure: false, idleSeconds, absoluteSeconds };
   }
   if (mode !== undefined && mode !== 'cognito') throw new Error('Invalid authentication configuration');

@@ -50,7 +50,7 @@ Local password sign-in is for development only. Run `npm run auth:hash-local-pas
 
 Export the reviewed `DATABASE_URL` before migrating. The runtime uses the restricted role in `ops/runtime-role.sql`.
 
-More: [implemented front-end API handoff](docs/FRONTEND_API_HANDOFF.md), [OpenAPI](docs/openapi.yaml), [browser authentication](docs/AUTH_CONTRACT.md), [AWS staging preparation](docs/AWS_STAGING.md).
+More: [staff workflow API](docs/STAFF_API.md), [implemented front-end API handoff](docs/FRONTEND_API_HANDOFF.md), [OpenAPI](docs/openapi.yaml), [browser authentication](docs/AUTH_CONTRACT.md), [AWS staging preparation](docs/AWS_STAGING.md).
 
 ## Branching and reviews
 

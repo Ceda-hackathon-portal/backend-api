@@ -12,6 +12,11 @@ const schema = z.object({
     const url = new URL(value);
     return ['postgres:', 'postgresql:'].includes(url.protocol) && [...url.searchParams.keys()].length === 0;
   }, 'Use a PostgreSQL URL without query overrides'),
+  // Separate login in ceda_assignment_manager. Never grant that role to the DATABASE_URL login.
+  ASSIGNMENT_DATABASE_URL: z.string().url().refine(value => {
+    const url = new URL(value);
+    return ['postgres:', 'postgresql:'].includes(url.protocol) && [...url.searchParams.keys()].length === 0;
+  }, 'Use a PostgreSQL URL without query overrides').optional(),
   DATABASE_SSL: z.enum(['true', 'false']).default('false').transform(value => value === 'true'),
   DATABASE_CA_FILE: z.string().min(1).optional(),
   DATABASE_POOL_MAX: integer(5, 1, 50),
