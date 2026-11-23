@@ -17,6 +17,9 @@ import { PrismaOfficerSubmissionReader } from './modules/applications/officer-su
 import { PrismaOfficerReviewScope } from './modules/applications/prisma-officer-review-scope.js';
 import { mountEvaluationRoutes } from './infrastructure/evaluation-routes.js';
 import { mountDecisionRoutes } from './infrastructure/decision-routes.js';
+import { serviceRoutes } from './modules/service-center/routes.js';
+import { serviceConfigSchema } from './modules/service-center/policy.js';
+import { startServiceWorker } from './modules/service-center/worker.js';
 import { mountStaffRoutes } from './modules/staff/routes.js';
 
 async function main() {
@@ -31,11 +34,16 @@ async function main() {
     ? createDatabase({ ...config, DATABASE_URL: config.ASSIGNMENT_DATABASE_URL }, () => logger.error({ code: 'ASSIGNMENT_DATABASE_IDLE_ERROR' }, 'database_error'))
     : null;
   const assignmentPrisma = assignmentDatabase ? new PrismaClient({ adapter: new PrismaPg(assignmentDatabase.pool, { disposeExternalPool: false }) }) : null;
+  let stopServiceWorker = async () => {};
   if (authentication && prisma) {
     const provider = authentication.mode === 'cognito' ? new CognitoProvider(authentication) : undefined;
     const auth = authRoutes(authentication, new PrismaSessionStore(prisma), provider);
     apiRouter.use('/auth', auth.router);
-    apiRouter.use('/applications', applicationRoutes(prisma, auth.verifier, auth.requireCsrf, { screenOnSubmit: true }));
+    const parsedServices = serviceConfigSchema.safeParse(process.env);
+    if (!parsedServices.success) throw new Error('Invalid service configuration');
+    apiRouter.use('/service', serviceRoutes(prisma, auth.verifier, auth.requireCsrf, parsedServices.data));
+    stopServiceWorker = startServiceWorker(prisma, parsedServices.data, () => logger.error({code:'SERVICE_WORKER_FAILED'}, 'service_worker_failed'));
+    apiRouter.use('/applications', applicationRoutes(prisma, auth.verifier, auth.requireCsrf, { screenOnSubmit: true, requirePrivacyConsent: true }));
     // Before the evaluation and decision routers: the decision router authenticates everything that reaches it.
     mountStaffRoutes(apiRouter, prisma, assignmentPrisma, auth.verifier, auth.requireCsrf);
     mountOfficerSubmissionRoutes(apiRouter, config, auth.verifier,
@@ -43,7 +51,7 @@ async function main() {
     mountEvaluationRoutes(apiRouter, prisma, auth.verifier, auth.requireCsrf);
     mountDecisionRoutes(apiRouter, prisma, auth.verifier, auth.requireCsrf);
   }
-  const resources = { check: () => database.check(), async close() { await prisma?.$disconnect(); await assignmentPrisma?.$disconnect(); await assignmentDatabase?.close(); await database.close(); } };
+  const resources = { check: () => database.check(), async close() { await stopServiceWorker(); await prisma?.$disconnect(); await assignmentPrisma?.$disconnect(); await assignmentDatabase?.close(); await database.close(); } };
   let draining = false;
   const server = createServer(createApp(config, { database: resources, logger, isDraining: () => draining, apiRouter }));
   server.headersTimeout = 10000;
