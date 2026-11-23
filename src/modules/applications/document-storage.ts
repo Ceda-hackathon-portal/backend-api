@@ -1,3 +1,4 @@
+import { scanDocument } from '../service-center/scanner.js';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { HttpError } from '../../shared/errors.js';
@@ -17,11 +18,12 @@ export class LocalPrivateDocumentStorage implements PrivateDocumentStorage {
     return path;
   }
   async put(storageKey: string, bytes: Buffer): Promise<void> {
+    await scanDocument(bytes);
     await mkdir(this.root, { recursive: true });
     await writeFile(this.path(storageKey), bytes, { flag: 'wx', mode: 0o600 });
   }
   async get(storageKey: string): Promise<Buffer> {
-    try { return await readFile(this.path(storageKey)); }
+    try { const bytes=await readFile(this.path(storageKey)); await scanDocument(bytes); return bytes; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT')
         throw new HttpError(404, 'DOCUMENT_MISSING', 'The stored file is unavailable. Upload the document again.');
