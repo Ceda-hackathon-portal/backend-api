@@ -44,7 +44,7 @@ try {
   command(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'status'], { ...process.env, DATABASE_URL: url });
   // Integration files provision and mutate PostgreSQL roles and shared catalog
   // objects. Run them sequentially to avoid concurrent DDL/catalog updates.
-  command(process.execPath, ['--test', '--test-concurrency=1', 'dist/tests/database.integration.test.js', 'dist/tests/auth-store.integration.test.js', 'dist/tests/phase4-security.integration.test.js', 'dist/tests/applications.integration.test.js', 'dist/tests/application-http.integration.test.js', 'dist/tests/officer-reader.integration.test.js', 'dist/tests/eligibility-persistence.integration.test.js', 'dist/tests/officer-http.integration.test.js', 'dist/tests/workflow-persistence.integration.test.js', 'dist/tests/evaluation-persistence.integration.test.js'], {
+  command(process.execPath, ['--test', '--test-concurrency=1', 'dist/tests/database.integration.test.js', 'dist/tests/auth-store.integration.test.js', 'dist/tests/phase4-security.integration.test.js', 'dist/tests/applications.integration.test.js', 'dist/tests/application-http.integration.test.js', 'dist/tests/officer-reader.integration.test.js', 'dist/tests/eligibility-persistence.integration.test.js', 'dist/tests/officer-http.integration.test.js', 'dist/tests/workflow-persistence.integration.test.js', 'dist/tests/evaluation-persistence.integration.test.js', 'dist/tests/service-center.integration.test.js'], {
     ...process.env, NODE_ENV: 'test', DATABASE_URL: url, DATABASE_SSL: 'false', DATABASE_CA_FILE: undefined,
     DATABASE_POOL_MAX: '2', DATABASE_STATEMENT_TIMEOUT_MS: '100', DATABASE_LOCK_TIMEOUT_MS: '100',
     DATABASE_QUERY_TIMEOUT_MS: '2000', LOG_LEVEL: 'silent', DISPOSABLE_DATABASE_RUN: id,
