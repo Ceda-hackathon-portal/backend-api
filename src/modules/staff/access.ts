@@ -8,6 +8,9 @@ export const staffRoles = [
   { role: 'eligibility-officer', permission: 'eligibility.verify' },
   { role: 'adjudicator', permission: 'adjudication.decide' },
   { role: 'evaluator', permission: 'evaluation.write' },
+  { role: 'management', permission: 'report.read' },
+  { role: 'system-administrator', permission: 'audit.read' },
+  { role: 'support-agent', permission: 'support.manage' },
 ] as const;
 export type StaffRole = (typeof staffRoles)[number]['role'];
 
