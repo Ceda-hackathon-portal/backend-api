@@ -37,6 +37,18 @@ model AuthUser {
   outcomeReleases OutcomeRelease[]
   outcomeReleaseReceipts OutcomeReleaseReceipt[]
 
+  supportOwned SupportConversation[] @relation("SupportOwner")
+  supportAssigned SupportConversation[] @relation("SupportAgent")
+  supportMessages SupportMessage[]
+  supportReads SupportRead[]
+  supportPresence SupportAgentPresence?
+  supportCallsMade SupportCall[] @relation("CallCaller")
+  supportCallsReceived SupportCall[] @relation("CallCallee")
+  supportSignals SupportSignal[]
+  serviceAudits ServiceAudit[]
+  alertPreference AlertPreference?
+  serviceNotifications ServiceNotification[]
+  privacyRequests PrivacyRequest[]
   @@map("users")
 }
 
@@ -87,6 +99,8 @@ model Programme {
   eligibilityChecks EligibilityCheck[]
   officerAssignments OfficerAssignment[]
 
+  supportConversations SupportConversation[]
+  serviceAudits ServiceAudit[]
   @@map("programmes")
 }
 
@@ -158,6 +172,8 @@ model Application {
   @@unique([id, programmeId])
   @@index([ownerId, updatedAt])
   @@index([programmeVersionId, programmeId])
+  supportConversations SupportConversation[]
+  @@index([programmeId, createdAt], map: "applications_reporting_idx")
   @@map("applications")
 }
 
@@ -188,6 +204,7 @@ model SubmissionVersion {
   @@unique([applicationId, version])
   @@unique([id, applicationId])
   @@index([applicationId, programmeVersionId])
+  @@index([submittedAt, applicationId], map: "submissions_reporting_idx")
   @@map("submission_versions")
 }
 
@@ -538,6 +555,7 @@ model OutcomeRelease {
   @@unique([releaseAuditId, applicationId, publisherId])
   @@unique([id, publisherId])
   @@index([applicationId, submissionVersionId])
+  @@index([programmeId, createdAt], map: "releases_reporting_idx")
   @@map("outcome_releases")
 }
 
@@ -678,4 +696,145 @@ model EligibilityOutbox {
   deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(3)
   audit EligibilityAudit @relation(fields: [checkId], references: [checkId], onDelete: Restrict, onUpdate: Restrict)
   @@map("eligibility_outbox")
+}
+
+
+model SupportConversation {
+  id String @id @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+  programmeId String @map("programme_id") @db.Uuid
+  applicationId String? @map("application_id") @db.Uuid
+  subject String @db.VarChar(160)
+  agentId String? @map("agent_id") @db.Uuid
+  status String @default("OPEN") @db.VarChar(16)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  firstReplyAt DateTime? @map("first_reply_at") @db.Timestamptz(6)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+  owner AuthUser @relation("SupportOwner",fields:[ownerId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  agent AuthUser? @relation("SupportAgent",fields:[agentId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  programme Programme @relation(fields:[programmeId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  application Application? @relation(fields:[applicationId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  messages SupportMessage[]
+  reads SupportRead[]
+  calls SupportCall[]
+  @@unique([id,ownerId])
+  @@index([programmeId,status,updatedAt],map:"support_queue_idx")
+  @@index([ownerId,updatedAt],map:"support_owner_idx")
+  @@map("support_conversations")
+}
+model SupportMessage {
+  id String @id @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  senderId String @map("sender_id") @db.Uuid
+  clientId String @map("client_id") @db.Uuid
+  body String @db.VarChar(4000)
+  internal Boolean @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation SupportConversation @relation(fields:[conversationId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  sender AuthUser @relation(fields:[senderId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@unique([conversationId,senderId,clientId])
+  @@index([conversationId,createdAt,id],map:"support_messages_cursor_idx")
+  @@map("support_messages")
+}
+model SupportRead {
+  conversationId String @map("conversation_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  readAt DateTime @default(now()) @map("read_at") @db.Timestamptz(6)
+  conversation SupportConversation @relation(fields:[conversationId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  user AuthUser @relation(fields:[userId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@id([conversationId,userId])
+  @@map("support_reads")
+}
+model SupportAgentPresence {
+  userId String @id @map("user_id") @db.Uuid
+  available Boolean @default(false)
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  capacity Int @default(4)
+  user AuthUser @relation(fields:[userId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@map("support_agents")
+}
+model SupportCall {
+  id String @id @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  callerId String @map("caller_id") @db.Uuid
+  calleeId String @map("callee_id") @db.Uuid
+  state String @db.VarChar(16)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  endedAt DateTime? @map("ended_at") @db.Timestamptz(6)
+  callerSeenAt DateTime @default(now()) @map("caller_seen_at") @db.Timestamptz(6)
+  calleeSeenAt DateTime @default(now()) @map("callee_seen_at") @db.Timestamptz(6)
+  conversation SupportConversation @relation(fields:[conversationId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  caller AuthUser @relation("CallCaller",fields:[callerId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  callee AuthUser @relation("CallCallee",fields:[calleeId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  signals SupportSignal[]
+  @@map("support_calls")
+}
+model SupportSignal {
+  sequence BigInt @id @default(autoincrement())
+  callId String @map("call_id") @db.Uuid
+  senderId String @map("sender_id") @db.Uuid
+  clientId String @map("client_id") @db.Uuid
+  kind String @db.VarChar(16)
+  payload Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  call SupportCall @relation(fields:[callId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  sender AuthUser @relation(fields:[senderId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@unique([callId,senderId,clientId])
+  @@map("support_signals")
+}
+model ServiceAudit {
+  id String @id @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  programmeId String? @map("programme_id") @db.Uuid
+  targetId String @map("target_id") @db.Uuid
+  action String @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor AuthUser @relation(fields:[actorId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  programme Programme? @relation(fields:[programmeId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@index([programmeId,createdAt],map:"service_audit_idx")
+  @@map("service_audits")
+}
+model AlertPreference {
+  userId String @id @map("user_id") @db.Uuid
+  inApp Boolean @default(true) @map("in_app")
+  email Boolean @default(false)
+  emailSince DateTime? @map("email_since") @db.Timestamptz(6)
+  contactConsentVersion String? @map("contact_consent_version") @db.VarChar(32)
+  contactConsentAt DateTime? @map("contact_consent_at") @db.Timestamptz(6)
+  consentVersion String? @map("consent_version") @db.VarChar(32)
+  consentAt DateTime? @map("consent_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user AuthUser @relation(fields:[userId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@map("alert_preferences")
+}
+model ServiceNotification {
+  id String @id @db.Uuid
+  recipientId String @map("recipient_id") @db.Uuid
+  sourceKey String @map("source_key") @db.VarChar(160)
+  title String @db.VarChar(160)
+  href String @db.VarChar(300)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  readAt DateTime? @map("read_at") @db.Timestamptz(6)
+  emailState String @default("PENDING") @map("email_state") @db.VarChar(16)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  lastError String? @map("last_error") @db.VarChar(64)
+  recipient AuthUser @relation(fields:[recipientId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@unique([recipientId,sourceKey])
+  @@index([recipientId,createdAt],map:"service_notifications_inbox_idx")
+  @@map("service_notifications")
+}
+model PrivacyRequest {
+  id String @id @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  kind String @db.VarChar(16)
+  status String @default("PENDING") @db.VarChar(16)
+  reason String? @db.VarChar(2000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  user AuthUser @relation(fields:[userId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@map("privacy_requests")
 }
