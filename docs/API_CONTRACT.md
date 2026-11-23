@@ -168,3 +168,8 @@ Unknown properties, invalid IDs/revisions/keys and DTO errors return 422. Missin
 Example lifecycle: obtain browser session and CSRF token; create a draft for a published programme version; PATCH the complete fields with revision 0; submit revision 1 with a unique key; retrieve the returned immutable version ID. Retry submit with the same key and revision to receive the original result. Submission survives recreating HTTP app and database connections.
 
 Persistent programme.manage grants are available to trusted transaction consumers. Applicant intake uses identity and owner checks without requiring a staff grant. Programme publication has no HTTP mutation yet. Staff grant provisioning is a separate privileged operational task. Current auth/session roles and grants remain empty pending a reviewed frontend capability projection.
+
+
+## Implemented service centre
+
+Implemented service endpoints under `/api/v1/service` are documented in [SERVICE_CENTER.md](SERVICE_CENTER.md). See [SERVICE_CENTER_READINESS.md](SERVICE_CENTER_READINESS.md) for verified behavior and outstanding provider and retention requirements. These implemented routes supersede proposed service/reporting sketches below.
