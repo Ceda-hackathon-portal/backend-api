@@ -9,6 +9,7 @@ import { PrismaClient } from './generated/prisma/client.js';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { authConfig } from './modules/auth/config.js';
 import { CognitoProvider } from './modules/auth/provider.js';
+import { GoogleProvider } from './modules/auth/google.js';
 import { PrismaSessionStore } from './modules/auth/store.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { applicationRoutes } from './modules/applications/routes.js';
@@ -37,7 +38,8 @@ async function main() {
   let stopServiceWorker = async () => {};
   if (authentication && prisma) {
     const provider = authentication.mode === 'cognito' ? new CognitoProvider(authentication) : undefined;
-    const auth = authRoutes(authentication, new PrismaSessionStore(prisma), provider);
+    const google = authentication.google ? new GoogleProvider({ ...authentication.google, apiOrigin: authentication.apiOrigin }) : undefined;
+    const auth = authRoutes(authentication, new PrismaSessionStore(prisma), provider, google);
     apiRouter.use('/auth', auth.router);
     const parsedServices = serviceConfigSchema.safeParse(process.env);
     if (!parsedServices.success) throw new Error('Invalid service configuration');
