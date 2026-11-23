@@ -1,10 +1,11 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
+import { googleAuthRoutes } from './google-routes.js';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError } from '../../shared/errors.js';
 import type { SessionVerifier } from '../../shared/authorization.js';
 import type { AuthConfig, LocalAuthConfig } from './config.js';
-import type { IdentityProvider } from './provider.js';
+import type { IdentityProvider, VerifiedIdentity } from './provider.js';
 import type { SessionStore } from './store.js';
 import { token, hash, csrf, validCsrf, seal, unseal, verifyLocalPassword } from './crypto.js';
 import { validateBody } from '../../shared/validation.js';
@@ -14,7 +15,7 @@ function cookie(header: string | undefined, name: string) {
   if (found.length !== 1) return null;
   const value = found[0]!.slice(name.length + 1); return /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 }
-export function authRoutes(config: AuthConfig, store: SessionStore, provider?: IdentityProvider) {
+export function authRoutes(config: AuthConfig, store: SessionStore, provider?: IdentityProvider, google?: IdentityProvider) {
   const router = Router(); const prefix = config.secure ? '__Host-' : 'dev_';
   const names = { session: prefix + 'ceda_session', csrf: prefix + 'ceda_csrf', attempt: prefix + 'ceda_oidc' };
   const options = { httpOnly: true, secure: config.secure, sameSite: 'lax' as const, path: '/' };
@@ -27,7 +28,7 @@ export function authRoutes(config: AuthConfig, store: SessionStore, provider?: I
   // Bounded per-process safety limiter; not a distributed service or permission cache.
   const attempts = new Map<string, { count: number; until: number }>();
   router.use((req, _res, next) => {
-    if (!['/login', '/local-login', '/callback'].includes(req.path)) { next(); return; }
+    if (!['/login', '/local-login', '/callback', '/google', '/google/callback'].includes(req.path)) { next(); return; }
     const now = Date.now(); for (const [key, row] of attempts) if (row.until < now) attempts.delete(key);
     const key = req.ip ?? 'unknown'; const row = attempts.get(key) ?? { count: 0, until: now + 60000 };
     if ((attempts.size >= 10000 && !attempts.has(key)) || ++row.count > 20) throw new HttpError(429, 'RATE_LIMITED', 'Try again later.');
@@ -38,6 +39,13 @@ export function authRoutes(config: AuthConfig, store: SessionStore, provider?: I
     if (!raw) { raw = token(); res.cookie(names.csrf, raw, { ...options, maxAge: 600000 }); }
     res.json({ data: { csrfToken: csrf(config.key, raw) } });
   });
+  async function startSession(req: Request, res: Response, identity: VerifiedIdentity) {
+    const raw = token(); const previous = sessionToken(req);
+    await store.create(identity, hash(raw), previous ? hash(previous) : null, config.idleSeconds, config.absoluteSeconds);
+    res.cookie(names.session, raw, { ...options, maxAge: config.absoluteSeconds * 1000 });
+    res.clearCookie(names.csrf, options);
+  }
+  router.use(googleAuthRoutes({ config, store, ...(google ? { google } : {}), requireCsrf, readCookie: cookie, startSession }));
   if (config.mode === 'cognito' && provider) {
     router.post('/login', validateBody(z.strictObject({}).optional()), async (req, res) => {
       requireCsrf(req);
@@ -62,10 +70,7 @@ export function authRoutes(config: AuthConfig, store: SessionStore, provider?: I
         const callback = new URL(config.apiOrigin + '/api/v1/auth/callback');
         for (const [key, value] of Object.entries(query)) if (value !== undefined) callback.searchParams.set(key, value);
         const identity = await provider.complete(callback, attempt);
-        const raw = token(); const previous = sessionToken(req);
-        await store.create(identity, hash(raw), previous ? hash(previous) : null, config.idleSeconds, config.absoluteSeconds);
-        res.cookie(names.session, raw, { ...options, maxAge: config.absoluteSeconds * 1000 });
-        res.clearCookie(names.csrf, options);
+        await startSession(req, res, identity);
         res.redirect(303, config.frontendOrigin + '/workspace');
       } catch { throw new HttpError(401, 'LOGIN_FAILED', 'Sign-in could not be verified.'); }
     });
@@ -82,10 +87,7 @@ export function authRoutes(config: AuthConfig, store: SessionStore, provider?: I
       const emailValid = emailBytes.length === expectedEmailBytes.length && timingSafeEqual(emailBytes, expectedEmailBytes);
       if (!passwordValid || !emailValid) throw new HttpError(401, 'LOGIN_FAILED', 'Sign-in could not be verified.');
       const identity = { issuer: 'urn:ceda:local-development', subject: account.email, email: account.email, name: account.name };
-      const raw = token(); const previous = sessionToken(req);
-      await store.create(identity, hash(raw), previous ? hash(previous) : null, config.idleSeconds, config.absoluteSeconds);
-      res.cookie(names.session, raw, { ...options, maxAge: config.absoluteSeconds * 1000 });
-      res.clearCookie(names.csrf, options);
+      await startSession(req, res, identity);
       res.json({ data: { authenticated: true } });
     });
   }
@@ -98,11 +100,11 @@ export function authRoutes(config: AuthConfig, store: SessionStore, provider?: I
   router.post('/logout', validateBody(z.strictObject({}).optional()), async (req, res) => {
     requireCsrf(req); const raw = sessionToken(req);
     if (raw) await store.revoke(hash(raw));
-    res.clearCookie(names.session, options); res.clearCookie(names.csrf, options); res.clearCookie(names.attempt, options); res.sendStatus(204);
+    res.clearCookie(names.session, options); res.clearCookie(names.csrf, options); res.clearCookie(names.attempt, options); res.clearCookie(prefix + 'ceda_google', options); res.sendStatus(204);
   });
   const verifier: SessionVerifier = { async verify(header) {
     const raw = cookie(header, names.session); const session = raw ? await store.find(hash(raw), config.idleSeconds) : null;
     return session ? { userId: session.userId, sessionId: session.id, authnLevel: config.mode === 'local' ? 'local-development' : 'oidc' } : null;
   } };
-  return { router, verifier, requireCsrf };
+  return { router, verifier, requireCsrf, startSession };
 }
