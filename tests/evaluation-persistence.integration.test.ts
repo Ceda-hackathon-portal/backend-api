@@ -1,3 +1,5 @@
+import { insights } from '../src/modules/service-center/reporting.js';
+import { notices } from '../src/modules/service-center/repository.js';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -294,6 +296,8 @@ test('full PostgreSQL lifecycle uses immutable submitted evidence, authorized as
     assert.equal(await owner.outcomeRelease.count({ where: { applicationId: application.id } }), 0);
     assert.equal((await owner.adjudicationDecision.findUniqueOrThrow({ where: { applicationId: application.id } })).releasedAt, null);
 
+    await runtime!.$transaction(async tx=>{await notices(tx);});
+    assert.equal(await owner.serviceNotification.count({where:{recipientId:applicant.userId,sourceKey:{startsWith:'outcome:'}}}),0);
     const [released, concurrentRelease] = await Promise.all([
       publishRepository(publisher).releaseDecision(decisionRow.id, releaseCommand, 'release-once'),
       publishRepository(publisher).releaseDecision(decisionRow.id, releaseCommand, 'release-once'),
@@ -302,6 +306,12 @@ test('full PostgreSQL lifecycle uses immutable submitted evidence, authorized as
     await assert.rejects(publishRepository(publisher).releaseDecision(decisionRow.id,
       { ...releaseCommand, applicantMessage: 'Changed message' }, 'release-once'), { status: 409 });
     await expectedState('OUTCOME_RELEASED', 8);
+    const report=await runtime!.$transaction(tx=>insights(tx,[programme.id],new Date(Date.now()-86400000),new Date(Date.now()+86400000)));
+    assert.deepEqual(report.outcomes,[{outcome:'APPROVED',count:1}]);
+    assert.equal(report.timing?.released,1);assert.ok((report.timing?.averageDays??-1)>=0);
+    await runtime!.$transaction(async tx=>{await notices(tx);});await runtime!.$transaction(async tx=>{await notices(tx);});
+    assert.equal(await owner.serviceNotification.count({where:{recipientId:applicant.userId,sourceKey:{startsWith:'outcome:'}}}),1);
+
     const releasedOutcome = await applicantRepository.readApplicantOutcome(application.id);
     assert.deepEqual(releasedOutcome, { applicationId: application.id, submissionVersionId: submission.id,
       programmeId: programme.id, programmeVersionId: version.id, outcome: 'APPROVED', message: releaseCommand.applicantMessage });
